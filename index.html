@@ -7,24 +7,28 @@ import {
   getFirestore, doc, getDoc, setDoc, addDoc, onSnapshot, collection, 
   query, where, updateDoc, deleteDoc, serverTimestamp, arrayUnion 
 } from 'firebase/firestore';
-const firebaseConfig = {
-  apiKey: "AIzaSyBkkTlRz9cHzRBTGRDztSJ-nKq_0reRbwk",
-  authDomain: "lorekeepersguild-47e2d.firebaseapp.com",
-  projectId: "lorekeepersguild-47e2d",
-  storageBucket: "lorekeepersguild-47e2d.firebasestorage.app",
-  messagingSenderId: "145071945264",
-  appId: "1:145071945264:web:aa0b00c2e1cc52dab45ff5",
-  measurementId: "G-KMF5MFBMEX"
-};
+
+// PDF generation library import (using CDN for single-file compatibility)
+// We will rely on window.print() or simple HTML rendering for character sheet for now. 
+// For advanced PDF, a dedicated library like html2pdf.js would be needed, 
+// which is complex to integrate in a single React file without external scripts.
+// I will use a simplified print-to-PDF method (window.print).
+
+// -----------------------------------------------------------------------------
+// 1. Firebase Initialization & Hooks
+// -----------------------------------------------------------------------------
+
+// Global variables provided by the environment
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'dnd-table-manager';
+const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
 // Helper to initialize Firebase
 let firebaseApp, db, auth;
-if (Object.keys(firebaseConfig).length > 0 && firebaseConfig.projectId !== 'YOUR_PROJECT_ID_HERE') {
+if (Object.keys(firebaseConfig).length > 0) {
   firebaseApp = initializeApp(firebaseConfig);
   db = getFirestore(firebaseApp);
   auth = getAuth(firebaseApp);
-} else {
-    // Proje ID'si güncellenmemişse hata mesajı ver
-    console.error("🔥🔥🔥 LÜTFEN EXTERNAL_FIREBASE_CONFIG'İ KENDİ ANAHTARLARINIZLA GÜNCELLEYİN! 🔥🔥🔥");
 }
 
 const useFirebase = () => {
@@ -32,23 +36,18 @@ const useFirebase = () => {
   const [isAuthReady, setIsAuthReady] = useState(false);
 
   useEffect(() => {
-    if (!auth) {
-        setIsAuthReady(true); // Auth objesi yoksa (hata durumunda) hemen hazır say
-        return;
-    }
+    if (!auth) return;
 
     // 1. Set up authentication listener
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setUserId(user.uid);
       } else {
-        // Canvas'a özgü kimlik doğrulama veya anonim giriş
+        // Fallback to anonymous sign-in if no custom token is available or user is signed out
         try {
           if (initialAuthToken) {
-            // SADECE CANVAS ORTAMINDA ÇALIŞIR
             await signInWithCustomToken(auth, initialAuthToken);
           } else {
-            // GITHUB/HARİCİ ORTAMDA VEYA TOKEN YOKSA ANONİM GİRİŞ
             await signInAnonymously(auth);
           }
         } catch (error) {
@@ -65,8 +64,10 @@ const useFirebase = () => {
 };
 
 // -----------------------------------------------------------------------------
-// 2. Utility Components & Functions 
+// 2. Utility Components & Functions
 // -----------------------------------------------------------------------------
+
+// Generic button styling
 const Button = ({ children, onClick, color = 'blue', disabled = false, className = '' }) => (
   <button
     onClick={onClick}
@@ -86,6 +87,7 @@ const Button = ({ children, onClick, color = 'blue', disabled = false, className
   </button>
 );
 
+// Dice Roller Logic (Kaos Zarımız)
 const rollDice = (diceString) => {
   const match = diceString.match(/^(\d*)d(\d+)([\+\-]\d+)?$/i);
   if (!match) return `Hata: Geçersiz zar formatı (${diceString}). Örnek: 1d20+5`;
@@ -122,8 +124,8 @@ const DiceRoller = ({ onRoll, defaultDice = '1d20' }) => {
   const handleRoll = () => {
     const roll = rollDice(diceInput);
     if (typeof roll === 'string') {
-      console.error(roll); 
-      setLastResult({result: 'HATA', details: roll});
+      alert(roll); // Using alert here for simple error, but custom modal is preferred
+      setLastResult(null);
     } else {
       setLastResult(roll);
       if (onRoll) {
@@ -156,10 +158,12 @@ const DiceRoller = ({ onRoll, defaultDice = '1d20' }) => {
     </div>
   );
 };
+
 // -----------------------------------------------------------------------------
-// 3. Application Views (Pages) 
+// 3. Application Views (Pages)
 // -----------------------------------------------------------------------------
-// Login Screen
+
+// A. Login Screen
 const LoginScreen = ({ setUserName, setCurrentView }) => {
   const [inputName, setInputName] = useState('');
 
@@ -507,8 +511,7 @@ const GameTable = ({ setCurrentView, activeTableId, isDM, userName, userId, db, 
 
       } else {
         setTable(null);
-        console.error("Hata: Masa bulunamadı veya silinmiş.");
-        // alert("Hata: Masa bulunamadı veya silinmiş."); // Alert yerine console.error kullanıldı
+        alert("Hata: Masa bulunamadı veya silinmiş.");
         setCurrentView('menu');
         setJoinCode('');
       }
@@ -865,13 +868,6 @@ const CreateGameLogic = ({ setCurrentView, setActiveTableId, userName, userId, d
   const createGame = async () => {
     setLoading(true);
     setError('');
-    
-    // Auth objesinin varlığını kontrol et
-    if (!db) {
-        setError("Firebase bağlantısı yok. Lütfen yapılandırma anahtarlarını kontrol edin.");
-        setLoading(false);
-        return;
-    }
 
     // Generate a simple 4-letter/digit code
     const code = Math.random().toString(36).substring(2, 6).toUpperCase();
@@ -901,7 +897,7 @@ const CreateGameLogic = ({ setCurrentView, setActiveTableId, userName, userId, d
       setCurrentView('table');
     } catch (e) {
       console.error("Masa oluşturulurken hata:", e);
-      setError("Masa oluşturulurken bir hata oluştu. Lütfen tekrar deneyin. Firestore kurallarını kontrol edin.");
+      setError("Masa oluşturulurken bir hata oluştu. Lütfen tekrar deneyin.");
     } finally {
       setLoading(false);
     }
@@ -940,13 +936,6 @@ const JoinGameLogic = ({ setCurrentView, joinCode, setActiveTableId, userName, u
 
     setLoading(true);
     setError('');
-
-    if (!db) {
-        setError("Firebase bağlantısı yok. Lütfen yapılandırma anahtarlarını kontrol edin.");
-        setLoading(false);
-        return;
-    }
-
     const tableDocPath = `artifacts/${appId}/public/data/tables/${joinCode}`;
 
     try {
@@ -989,7 +978,7 @@ const JoinGameLogic = ({ setCurrentView, joinCode, setActiveTableId, userName, u
       }
     } catch (e) {
       console.error("Masaya katılırken hata:", e);
-      setError("Masaya katılırken beklenmedik bir hata oluştu. Firestore kurallarını kontrol edin.");
+      setError("Masaya katılırken beklenmedik bir hata oluştu.");
     } finally {
       setLoading(false);
     }
@@ -1060,18 +1049,6 @@ const App = () => {
         </div>
       );
     }
-    
-    if (!db || !auth) {
-        return (
-             <div className="flex justify-center items-center min-h-screen text-2xl text-red-700 bg-red-100 p-8">
-                <div className='p-6 bg-white rounded-xl shadow-lg'>
-                    <p className='font-bold mb-4'>HATA: Firebase Yapılandırması Eksik</p>
-                    <p className='text-base text-gray-700'>Lütfen <code>DnD_Lobby.jsx</code> dosyasının tepesindeki <code>EXTERNAL_FIREBASE_CONFIG</code> alanını kendi Firebase projenizin anahtarlarıyla güncelleyin.</p>
-                </div>
-            </div>
-        );
-    }
-
 
     if (!userName) {
       return <LoginScreen setUserName={setUserName} setCurrentView={setCurrentView} />;
