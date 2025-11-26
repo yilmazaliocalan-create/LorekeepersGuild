@@ -6,6 +6,14 @@ import {
 import { 
   getFirestore, doc, getDoc, setDoc, addDoc, onSnapshot, collection, 
   query, where, updateDoc, deleteDoc, serverTimestamp, arrayUnion 
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  getFirestore, doc, getDoc, setDoc, addDoc, onSnapshot, collection, 
+  query, where, updateDoc, deleteDoc, serverTimestamp, arrayUnion 
 } from 'firebase/firestore';
 
 // =================================================================================
@@ -1125,3 +1133,1092 @@ const App = () => {
 };
 
 export default App;
+// Helper to initialize Firebase
+let firebaseApp, db, auth;
+if (Object.keys(firebaseConfig).length > 0 && firebaseConfig.projectId !== 'YOUR_PROJECT_ID_HERE') {
+  firebaseApp = initializeApp(firebaseConfig);
+  db = getFirestore(firebaseApp);
+  auth = getAuth(firebaseApp);
+} else {
+    // Proje ID'si güncellenmemişse hata mesajı ver
+    console.error("🔥🔥🔥 LÜTFEN EXTERNAL_FIREBASE_CONFIG'İ KENDİ ANAHTARLARINIZLA GÜNCELLEYİN! 🔥🔥🔥");
+}
+
+const useFirebase = () => {
+  const [userId, setUserId] = useState(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+
+  useEffect(() => {
+    if (!auth) {
+        setIsAuthReady(true); // Auth objesi yoksa (hata durumunda) hemen hazır say
+        return;
+    }
+
+    // 1. Set up authentication listener
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setUserId(user.uid);
+      } else {
+        // Canvas'a özgü kimlik doğrulama veya anonim giriş
+        try {
+          if (initialAuthToken) {
+            // SADECE CANVAS ORTAMINDA ÇALIŞIR
+            await signInWithCustomToken(auth, initialAuthToken);
+          } else {
+            // GITHUB/HARİCİ ORTAMDA VEYA TOKEN YOKSA ANONİM GİRİŞ
+            await signInAnonymously(auth);
+          }
+        } catch (error) {
+          console.error("Firebase Auth Error:", error);
+        }
+      }
+      setIsAuthReady(true);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  return { db, auth, userId, isAuthReady };
+};
+
+// -----------------------------------------------------------------------------
+// 2. Utility Components & Functions 
+// -----------------------------------------------------------------------------
+const Button = ({ children, onClick, color = 'blue', disabled = false, className = '' }) => (
+  <button
+    onClick={onClick}
+    disabled={disabled}
+    className={`
+      px-6 py-3 rounded-xl font-semibold transition-all duration-200 shadow-lg 
+      ${disabled ? 'bg-gray-400 cursor-not-allowed' : 
+        color === 'blue' ? 'bg-indigo-600 hover:bg-indigo-700 text-white transform hover:scale-[1.02]' : 
+        color === 'red' ? 'bg-red-500 hover:bg-red-600 text-white transform hover:scale-[1.02]' :
+        color === 'green' ? 'bg-emerald-500 hover:bg-emerald-600 text-white transform hover:scale-[1.02]' :
+        'bg-gray-200 hover:bg-gray-300 text-gray-800 transform hover:scale-[1.02]'
+      }
+      ${className}
+    `}
+  >
+    {children}
+  </button>
+);
+
+const rollDice = (diceString) => {
+  const match = diceString.match(/^(\d*)d(\d+)([\+\-]\d+)?$/i);
+  if (!match) return `Hata: Geçersiz zar formatı (${diceString}). Örnek: 1d20+5`;
+
+  const numDice = parseInt(match[1] || '1', 10);
+  const dieSize = parseInt(match[2], 10);
+  const modifier = parseInt(match[3] || '0', 10);
+
+  if (numDice <= 0 || dieSize <= 0) return "Hata: Zar sayısı veya boyutu sıfırdan büyük olmalı.";
+
+  let totalRoll = 0;
+  const rolls = [];
+
+  for (let i = 0; i < numDice; i++) {
+    const roll = Math.floor(Math.random() * dieSize) + 1;
+    rolls.push(roll);
+    totalRoll += roll;
+  }
+
+  const result = totalRoll + modifier;
+  const rollDetails = rolls.length > 1 ? ` (${rolls.join('+')})` : '';
+
+  return {
+    diceString,
+    result,
+    details: `${numDice}d${dieSize}${match[3] || ''} atışı: ${totalRoll}${modifier !== 0 ? (modifier > 0 ? ` + ${modifier}` : ` - ${Math.abs(modifier)}`) : ''} = ${result}${rollDetails}`
+  };
+};
+
+const DiceRoller = ({ onRoll, defaultDice = '1d20' }) => {
+  const [diceInput, setDiceInput] = useState(defaultDice);
+  const [lastResult, setLastResult] = useState(null);
+
+  const handleRoll = () => {
+    const roll = rollDice(diceInput);
+    if (typeof roll === 'string') {
+      console.error(roll); 
+      setLastResult({result: 'HATA', details: roll});
+    } else {
+      setLastResult(roll);
+      if (onRoll) {
+        onRoll(roll.details, roll.result);
+      }
+    }
+  };
+
+  return (
+    <div className="p-4 bg-gray-100 rounded-xl shadow-inner mt-4">
+      <h3 className="text-lg font-bold mb-3 text-gray-700">Kaos Zarları</h3>
+      <div className="flex space-x-2">
+        <input
+          type="text"
+          value={diceInput}
+          onChange={(e) => setDiceInput(e.target.value)}
+          placeholder="Örn: 1d20+5"
+          className="flex-grow p-2 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500"
+        />
+        <Button onClick={handleRoll} color="green" className="flex-shrink-0">
+          Zar At
+        </Button>
+      </div>
+      {lastResult && (
+        <div className="mt-3 p-3 bg-white border border-gray-200 rounded-lg text-sm">
+          <p className="font-semibold text-xl text-indigo-700">Sonuç: {lastResult.result}</p>
+          <p className="text-gray-600 break-words">{lastResult.details}</p>
+        </div>
+      )}
+    </div>
+  );
+};
+// -----------------------------------------------------------------------------
+// 3. Application Views (Pages) 
+// -----------------------------------------------------------------------------
+// Login Screen
+const LoginScreen = ({ setUserName, setCurrentView }) => {
+  const [inputName, setInputName] = useState('');
+
+  const handleSubmit = () => {
+    if (inputName.trim()) {
+      setUserName(inputName.trim());
+      setCurrentView('menu');
+    }
+  };
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-white p-4">
+      <div className="bg-gray-800 p-10 rounded-2xl shadow-2xl w-full max-w-md">
+        <h1 className="text-4xl font-extrabold text-indigo-400 mb-6 text-center">Lorekeeper's Guild</h1>
+        <p className="mb-6 text-gray-300 text-center">Maceraya başlamadan önce ismini gir!</p>
+        <input
+          type="text"
+          value={inputName}
+          onChange={(e) => setInputName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+          placeholder="İsim veya Takma Ad"
+          className="w-full p-3 mb-6 border-2 border-indigo-500 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+        />
+        <Button onClick={handleSubmit} disabled={!inputName.trim()} className="w-full">
+          Giriş Yap
+        </Button>
+      </div>
+    </div>
+  );
+};
+
+// B. Main Menu
+const MainMenu = ({ setCurrentView, setJoinCode, userName }) => {
+  const [code, setCode] = useState('');
+
+  return (
+    <div className="flex flex-col items-center min-h-screen bg-gray-100 p-8">
+      <h1 className="text-3xl font-bold mb-8 text-indigo-700">Hoş Geldin, {userName}!</h1>
+      
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-4xl">
+        
+        {/* Karakter Yarat */}
+        <div className="bg-white p-6 rounded-xl shadow-lg hover:shadow-xl transition duration-300">
+          <h2 className="text-xl font-semibold mb-3 text-gray-800">Karakter Yarat</h2>
+          <p className="text-gray-600 mb-4">Yeni bir maceraperest oluştur ve tüm karakterlerini yönet.</p>
+          <Button onClick={() => setCurrentView('create-char')} color="blue" className="w-full">
+            Karakter Yarat / Yönet
+          </Button>
+        </div>
+
+        {/* Masa Aç */}
+        <div className="bg-white p-6 rounded-xl shadow-lg hover:shadow-xl transition duration-300">
+          <h2 className="text-xl font-semibold mb-3 text-gray-800">Masa Aç (DM)</h2>
+          <p className="text-gray-600 mb-4">Yeni bir oyun oturumu başlat ve Dungeon Master ol.</p>
+          <Button onClick={() => setCurrentView('create-game')} color="green" className="w-full">
+            Masa Oluştur
+          </Button>
+        </div>
+
+        {/* Masaya Otur */}
+        <div className="bg-white p-6 rounded-xl shadow-lg hover:shadow-xl transition duration-300">
+          <h2 className="text-xl font-semibold mb-3 text-gray-800">Masaya Otur</h2>
+          <p className="text-gray-600 mb-4">DM'den aldığın kod ile mevcut bir oyuna katıl.</p>
+          <input
+            type="text"
+            value={code}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            placeholder="Masa Kodunu Gir"
+            className="w-full p-2 mb-4 border border-gray-300 rounded-lg text-gray-900"
+          />
+          <Button 
+            onClick={() => { setJoinCode(code); setCurrentView('join-game'); }} 
+            disabled={code.length < 4} 
+            color="red" 
+            className="w-full"
+          >
+            Masaya Bağlan
+          </Button>
+        </div>
+
+      </div>
+
+      {/* Kaos Zarımız (Global) */}
+      <div className="w-full max-w-md mt-10">
+        <DiceRoller onRoll={() => {}} defaultDice="1d20" />
+      </div>
+    </div>
+  );
+};
+
+// C. Character Creator
+const CharacterCreator = ({ setCurrentView, userId, db }) => {
+  const [characters, setCharacters] = useState([]);
+  const [newChar, setNewChar] = useState({ 
+    name: '', race: '', class: '', level: 1, str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10, notes: '' 
+  });
+  const [editingId, setEditingId] = useState(null);
+  const charSheetRef = useRef(null);
+
+  const charCollectionPath = `artifacts/${appId}/users/${userId}/characters`;
+
+  // Fetch characters
+  useEffect(() => {
+    if (!userId || !db) return;
+
+    const q = collection(db, charCollectionPath);
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const charList = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setCharacters(charList);
+    }, (error) => {
+      console.error("Karakterleri çekerken hata:", error);
+    });
+
+    return () => unsubscribe();
+  }, [userId, db]);
+
+  // Handle form change
+  const handleChange = (e) => {
+    const { name, value, type } = e.target;
+    setNewChar(prev => ({
+      ...prev,
+      [name]: type === 'number' ? parseInt(value) || 0 : value
+    }));
+  };
+
+  // Save/Update character
+  const handleSave = async (e) => {
+    e.preventDefault();
+    if (!newChar.name.trim()) return;
+
+    const charData = { ...newChar, updatedAt: serverTimestamp() };
+
+    try {
+      if (editingId) {
+        await setDoc(doc(db, charCollectionPath, editingId), charData);
+      } else {
+        await addDoc(collection(db, charCollectionPath), charData);
+      }
+      // Reset form
+      setNewChar({ 
+        name: '', race: '', class: '', level: 1, str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10, notes: '' 
+      });
+      setEditingId(null);
+    } catch (error) {
+      console.error("Karakteri kaydederken hata:", error);
+    }
+  };
+  
+  // Set character for editing
+  const handleEdit = (char) => {
+    setNewChar(char);
+    setEditingId(char.id);
+    window.scrollTo(0, 0); // Scroll to form
+  };
+
+  // Delete character
+  const handleDelete = async (id) => {
+    if (window.confirm("Bu karakteri silmek istediğine emin misin?")) {
+      try {
+        await deleteDoc(doc(db, charCollectionPath, id));
+        if (editingId === id) {
+          setEditingId(null);
+          setNewChar({ name: '', race: '', class: '', level: 1, str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10, notes: '' });
+        }
+      } catch (error) {
+        console.error("Karakteri silerken hata:", error);
+      }
+    }
+  };
+
+  // PDF Download (Simplified using print)
+  const handlePdfDownload = (char) => {
+    const content = charSheetRef.current;
+    if (!content) return;
+
+    const printWindow = window.open('', '', 'height=600,width=800');
+    printWindow.document.write('<html><head><title>Karakter Kağıdı</title>');
+    
+    // Minimal styling for print
+    printWindow.document.write('<style>');
+    printWindow.document.write(`
+      @page { size: A4; margin: 1cm; }
+      body { font-family: sans-serif; padding: 20px; color: #333; }
+      h1, h2, h3 { color: #1f2937; margin-bottom: 10px; }
+      .sheet { border: 2px solid #1f2937; padding: 20px; border-radius: 8px; }
+      .section { border-top: 1px dashed #9ca3af; padding-top: 10px; margin-top: 10px; }
+      .attribute { display: inline-block; width: 15%; text-align: center; margin-right: 1%; }
+      .attribute-box { border: 1px solid #6b7280; padding: 8px; margin-bottom: 5px; border-radius: 4px; }
+      .notes { white-space: pre-wrap; min-height: 100px; border: 1px solid #9ca3af; padding: 10px; border-radius: 4px; }
+      .no-print { display: none; }
+    `);
+    printWindow.document.write('</style>');
+    printWindow.document.write('</head><body>');
+    
+    // Render the character sheet HTML content
+    printWindow.document.write(content.outerHTML);
+    
+    printWindow.document.write('</body></html>');
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  };
+
+  // Character Sheet Preview Component
+  const CharSheetPreview = ({ char, allowEdit = true }) => {
+    const attributes = [
+      { key: 'str', label: 'STR' }, { key: 'dex', label: 'DEX' }, { key: 'con', label: 'CON' },
+      { key: 'int', label: 'INT' }, { key: 'wis', label: 'WIS' }, { key: 'cha', label: 'CHA' }
+    ];
+
+    return (
+      <div 
+        ref={editingId === char.id ? charSheetRef : null} // Attach ref only to the character being edited for PDF
+        className="bg-white p-6 rounded-xl shadow-md border-t-4 border-indigo-500 w-full"
+      >
+        <div className="flex justify-between items-start mb-4">
+          <h2 className="text-2xl font-bold text-gray-800">{char.name || 'İsimsiz Karakter'}</h2>
+          <div className="flex space-x-2 no-print">
+            {allowEdit && (
+              <Button onClick={() => handleEdit(char)} color="gray" className="py-1 px-3 text-sm">Düzenle</Button>
+            )}
+            <Button onClick={() => handlePdfDownload(char)} color="gray" className="py-1 px-3 text-sm">PDF İndir</Button>
+            {allowEdit && (
+              <Button onClick={() => handleDelete(char.id)} color="red" className="py-1 px-3 text-sm">Sil</Button>
+            )}
+          </div>
+        </div>
+
+        <div className="text-gray-600 mb-4">
+          <p><strong>Irk:</strong> {char.race}</p>
+          <p><strong>Sınıf:</strong> {char.class} ({char.level}. Seviye)</p>
+        </div>
+
+        <h3 className="text-lg font-semibold border-b pb-1 mb-3">Nitelikler</h3>
+        <div className="grid grid-cols-3 gap-4 mb-4">
+          {attributes.map(attr => (
+            <div key={attr.key} className="text-center bg-indigo-50 p-3 rounded-lg border">
+              <span className="text-sm font-medium text-indigo-700">{attr.label}</span>
+              <p className="text-2xl font-extrabold text-gray-800">{char[attr.key]}</p>
+              <p className="text-xs text-gray-500">Mod: {Math.floor((char[attr.key] - 10) / 2)}</p>
+            </div>
+          ))}
+        </div>
+
+        <h3 className="text-lg font-semibold border-b pb-1 mb-2">Notlar</h3>
+        <p className="whitespace-pre-wrap text-sm p-3 bg-gray-50 border rounded-lg h-32 overflow-auto">{char.notes || 'Not yok.'}</p>
+      </div>
+    );
+  };
+
+  return (
+    <div className="p-8 bg-gray-100 min-h-screen">
+      <div className="max-w-6xl mx-auto">
+        <Button onClick={() => setCurrentView('menu')} color="gray" className="mb-6">
+          &larr; Ana Menüye Dön
+        </Button>
+        <h1 className="text-4xl font-extrabold text-indigo-700 mb-8">Karakter Yaratma ve Yönetim</h1>
+
+        {/* Character Creation Form */}
+        <div className="bg-white p-8 rounded-xl shadow-xl mb-10">
+          <h2 className="text-2xl font-bold mb-6 text-gray-800">{editingId ? 'Karakteri Düzenle' : 'Yeni Karakter Oluştur'}</h2>
+          <form onSubmit={handleSave} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <input type="text" name="name" value={newChar.name} onChange={handleChange} placeholder="Karakter Adı" required className="p-3 border rounded-lg focus:ring-indigo-500" />
+              <input type="text" name="race" value={newChar.race} onChange={handleChange} placeholder="Irk (Race)" className="p-3 border rounded-lg focus:ring-indigo-500" />
+              <input type="text" name="class" value={newChar.class} onChange={handleChange} placeholder="Sınıf (Class)" className="p-3 border rounded-lg focus:ring-indigo-500" />
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-7 gap-4 items-end">
+              <div className="col-span-1">
+                <label className="text-sm font-medium text-gray-600 block mb-1">Seviye</label>
+                <input type="number" name="level" value={newChar.level} onChange={handleChange} min="1" max="20" className="p-3 border rounded-lg w-full focus:ring-indigo-500" />
+              </div>
+              {/* Attributes Inputs */}
+              {['str', 'dex', 'con', 'int', 'wis', 'cha'].map(attr => (
+                <div key={attr} className="col-span-1">
+                  <label className="text-sm font-medium text-gray-600 block mb-1">{attr.toUpperCase()}</label>
+                  <input type="number" name={attr} value={newChar[attr]} onChange={handleChange} min="3" max="30" className="p-3 border rounded-lg w-full focus:ring-indigo-500" />
+                </div>
+              ))}
+            </div>
+            <textarea name="notes" value={newChar.notes} onChange={handleChange} placeholder="Önemli Notlar, Envanter, Büyüler..." rows="5" className="p-3 border rounded-lg w-full focus:ring-indigo-500"></textarea>
+            <Button type="submit" color="blue" className="w-full">
+              {editingId ? 'Karakteri Güncelle' : 'Karakteri Kaydet'}
+            </Button>
+            {editingId && (
+              <Button type="button" onClick={() => setEditingId(null) || setNewChar({ name: '', race: '', class: '', level: 1, str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10, notes: '' })} color="gray" className="w-full mt-2">
+                İptal Et / Yeni Karakter
+              </Button>
+            )}
+          </form>
+        </div>
+
+        {/* Character List */}
+        <h2 className="text-3xl font-bold text-gray-700 mb-6">Yarattığın Karakterler ({characters.length})</h2>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {characters.length === 0 ? (
+            <p className="text-gray-500 lg:col-span-2">Henüz karakter oluşturmadın. Yukarıdaki formu kullanarak bir tane oluştur.</p>
+          ) : (
+            characters.map(char => (
+              <CharSheetPreview key={char.id} char={char} />
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// D. Game Table (DM or Player)
+const GameTable = ({ setCurrentView, activeTableId, isDM, userName, userId, db, characters, setJoinCode }) => {
+  const [table, setTable] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [messageInput, setMessageInput] = useState('');
+  const [selectedCharId, setSelectedCharId] = useState('');
+  const [currentEditChar, setCurrentEditChar] = useState(null);
+  const chatRef = useRef(null);
+
+  const tableDocPath = `artifacts/${appId}/public/data/tables/${activeTableId}`;
+  const chatCollectionPath = `${tableDocPath}/chat`;
+
+  // Fetch Table Data & Chat
+  useEffect(() => {
+    if (!activeTableId || !db) return;
+
+    // 1. Table data (players, DM, selected characters)
+    const unsubscribeTable = onSnapshot(doc(db, tableDocPath), (docSnapshot) => {
+      if (docSnapshot.exists()) {
+        const tableData = docSnapshot.data();
+        setTable(tableData);
+        
+        // Auto-select character if player is in table and hasn't selected one
+        const userEntry = tableData.players.find(p => p.userId === userId);
+        if (userEntry && userEntry.charId && !selectedCharId) {
+          setSelectedCharId(userEntry.charId);
+        }
+
+        // Set the current player's character sheet for DM editing
+        if (isDM && currentEditChar && tableData.players.find(p => p.userId === currentEditChar.userId)?.charId !== currentEditChar.charId) {
+          // If the player changed character, update the DM's view
+          setCurrentEditChar(null); 
+        }
+
+      } else {
+        setTable(null);
+        console.error("Hata: Masa bulunamadı veya silinmiş.");
+        // alert("Hata: Masa bulunamadı veya silinmiş."); // Alert yerine console.error kullanıldı
+        setCurrentView('menu');
+        setJoinCode('');
+      }
+    }, (error) => {
+      console.error("Masa verisi çekilirken hata:", error);
+    });
+
+    // 2. Chat messages
+    const unsubscribeChat = onSnapshot(query(collection(db, chatCollectionPath)), (snapshot) => {
+      const msgs = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .sort((a, b) => (a.timestamp?.toMillis() || 0) - (b.timestamp?.toMillis() || 0));
+      setMessages(msgs);
+    }, (error) => {
+      console.error("Chat mesajları çekilirken hata:", error);
+    });
+
+    return () => {
+      unsubscribeTable();
+      unsubscribeChat();
+    };
+  }, [activeTableId, db, userId, isDM, setCurrentView, setJoinCode, selectedCharId, currentEditChar]);
+
+  // Scroll to bottom of chat
+  useEffect(() => {
+    if (chatRef.current) {
+      chatRef.current.scrollTop = chatRef.current.scrollHeight;
+    }
+  }, [messages]);
+
+  // Handle Chat Message Send
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+    const text = messageInput.trim();
+    if (!text) return;
+
+    try {
+      await addDoc(collection(db, chatCollectionPath), {
+        text,
+        senderName: userName,
+        senderId: userId,
+        timestamp: serverTimestamp(),
+        type: 'message',
+      });
+      setMessageInput('');
+    } catch (error) {
+      console.error("Mesaj gönderilemedi:", error);
+    }
+  };
+
+  // Dice Roll Handler for Chat
+  const handleDiceRoll = async (details, result) => {
+    try {
+      await addDoc(collection(db, chatCollectionPath), {
+        text: `Zar Atışı: ${details}`,
+        senderName: userName,
+        senderId: userId,
+        timestamp: serverTimestamp(),
+        type: 'roll',
+        rollResult: result
+      });
+    } catch (error) {
+      console.error("Zar atışı kaydedilemedi:", error);
+    }
+  };
+
+  // Select Character for the Table
+  const handleSelectCharacter = async (charId) => {
+    try {
+      const userEntry = table.players.find(p => p.userId === userId);
+      const newPlayers = table.players.map(p => 
+        p.userId === userId ? { ...p, charId: charId } : p
+      );
+      
+      await updateDoc(doc(db, tableDocPath), { players: newPlayers });
+      setSelectedCharId(charId);
+
+      // Send a system message to chat
+      const charName = characters.find(c => c.id === charId)?.name || "Seçilen Karakter";
+      await addDoc(collection(db, chatCollectionPath), {
+        text: `${userName} masaya "${charName}" karakteriyle katıldı.`,
+        senderName: 'Sistem',
+        senderId: 'system',
+        timestamp: serverTimestamp(),
+        type: 'system',
+      });
+    } catch (error) {
+      console.error("Karakter seçilemedi:", error);
+    }
+  };
+
+  // DM Function: Load Player Character for Editing
+  const handleDMEditChar = async (player) => {
+    if (!player.charId) return;
+
+    const charDoc = await getDoc(doc(db, `artifacts/${appId}/users/${player.userId}/characters`, player.charId));
+    if (charDoc.exists()) {
+      setCurrentEditChar({ id: charDoc.id, userId: player.userId, ...charDoc.data() });
+    }
+  };
+
+  // DM Function: Save Edited Character
+  const handleDMSaveEdit = async (updatedChar) => {
+    if (!currentEditChar) return;
+    try {
+      // Find the character's original path (using its userId)
+      await setDoc(doc(db, `artifacts/${appId}/users/${currentEditChar.userId}/characters`, currentEditChar.id), updatedChar);
+      setCurrentEditChar(null);
+    } catch (error) {
+      console.error("DM karakteri güncellerken hata:", error);
+    }
+  };
+
+
+  // Helper to find the current player's character sheet
+  const myChar = characters.find(c => c.id === selectedCharId);
+
+  if (!table) return <div className="p-8 text-center text-xl text-gray-500">Masa yükleniyor...</div>;
+
+  return (
+    <div className="flex h-screen bg-gray-900">
+      {/* Sidebar - Player List & Character Selection */}
+      <div className="w-1/4 bg-gray-800 p-6 flex flex-col space-y-6 overflow-y-auto">
+        <Button onClick={() => setCurrentView('menu') || setJoinCode('')} color="gray" className="mb-4">
+          &larr; Masadan Ayrıl
+        </Button>
+        <h2 className="text-2xl font-bold text-indigo-400">Masa Kodu: {activeTableId}</h2>
+        <p className="text-sm text-gray-400">DM: {table.dmName} {isDM && "(Siz)"}</p>
+
+        {/* Character Selection */}
+        <div className="bg-gray-700 p-4 rounded-xl">
+          <h3 className="text-lg font-semibold text-gray-200 mb-2">Karakterini Seç</h3>
+          <select
+            value={selectedCharId}
+            onChange={(e) => handleSelectCharacter(e.target.value)}
+            className="w-full p-2 rounded-lg bg-gray-600 text-white border-gray-500 focus:ring-indigo-500"
+          >
+            <option value="">-- Karakter Seç --</option>
+            {characters.map(char => (
+              <option key={char.id} value={char.id}>{char.name} ({char.class})</option>
+            ))}
+          </select>
+          {!myChar && selectedCharId && <p className="text-red-300 text-sm mt-2">Karakterin DM tarafından onaylanmalı.</p>}
+        </div>
+
+        {/* Player List */}
+        <div className="flex-grow">
+          <h3 className="text-xl font-semibold text-gray-200 border-b border-gray-600 pb-2 mb-3">Oyuncular ({table.players.length})</h3>
+          <ul className="space-y-2">
+            {table.players.map(player => {
+              const char = characters.find(c => c.id === player.charId && c.userId === player.userId); // Find the character sheet owned by the user
+              return (
+                <li key={player.userId} className={`p-3 rounded-lg flex justify-between items-center ${player.userId === userId ? 'bg-indigo-600' : 'bg-gray-700'}`}>
+                  <div className="text-sm">
+                    <p className="font-bold text-white">{player.userName} {player.userId === userId ? "(Siz)" : ''}</p>
+                    <p className="text-xs italic text-gray-300">{char ? char.name : 'Karakter Seçilmedi'}</p>
+                  </div>
+                  {isDM && player.charId && (
+                    <Button onClick={() => handleDMEditChar(player)} color="red" className="py-1 px-2 text-xs">
+                      Düzenle
+                    </Button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+        
+        {/* Dice Roller in Sidebar */}
+        <DiceRoller onRoll={handleDiceRoll} defaultDice="1d20" />
+      </div>
+
+      {/* Main Content - Character Sheet (Player) / DM Edit (DM) / Chat */}
+      <div className="flex-grow flex flex-col p-6 space-y-6 overflow-y-auto">
+        
+        {/* Character Sheet / DM Edit Area */}
+        <div className="bg-gray-800 p-6 rounded-xl shadow-lg flex-shrink-0">
+          <h3 className="text-xl font-bold text-white mb-4">{isDM ? 'DM Düzenleme Alanı' : 'Karakter Kağıdınız'}</h3>
+
+          {/* DM Editing Component */}
+          {isDM && currentEditChar ? (
+             <DMEnhancedCharEditor char={currentEditChar} onSave={handleDMSaveEdit} onCancel={() => setCurrentEditChar(null)} />
+          ) : (
+            // Player's View of Their Character
+            myChar ? (
+              <PlayerCharSheet char={myChar} onPdfDownload={() => {
+                 // Simplified print for player
+                 const sheetToPrint = document.getElementById('player-char-sheet');
+                 if (sheetToPrint) {
+                    const printWindow = window.open('', '', 'height=600,width=800');
+                    printWindow.document.write('<html><head><title>Karakter Kağıdı</title>');
+                    printWindow.document.write('<style>@page { size: A4; margin: 1cm; } body { font-family: sans-serif; padding: 20px; color: #333; } .attribute { display: inline-block; width: 15%; text-align: center; margin-right: 1%; } .notes { white-space: pre-wrap; min-height: 100px; border: 1px solid #9ca3af; padding: 10px; border-radius: 4px; } </style>');
+                    printWindow.document.write('</head><body>');
+                    printWindow.document.write(sheetToPrint.outerHTML);
+                    printWindow.document.write('</body></html>');
+                    printWindow.document.close();
+                    printWindow.focus();
+                    printWindow.print();
+                 }
+              }}/>
+            ) : (
+              <p className="text-gray-400">Masaya katılmak için soldan bir karakter seçin.</p>
+            )
+          )}
+        </div>
+
+        {/* Chat Area */}
+        <div className="flex-grow bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col">
+          <h3 className="text-xl font-bold text-white border-b border-gray-700 pb-2 mb-3">Ortak Sohbet ve Notlar</h3>
+          
+          <div ref={chatRef} className="flex-grow overflow-y-auto space-y-3 p-2 custom-scrollbar">
+            {messages.map(msg => (
+              <div key={msg.id} className={`max-w-xs md:max-w-md p-3 rounded-xl shadow ${
+                msg.senderId === 'system' ? 'bg-yellow-800 text-yellow-100 text-center mx-auto' :
+                msg.senderId === userId ? 'bg-indigo-600 text-white ml-auto' : 
+                'bg-gray-700 text-gray-200 mr-auto'
+              }`}>
+                {msg.senderId !== 'system' && (
+                  <p className="font-semibold text-sm mb-1">{msg.senderName}</p>
+                )}
+                <p className={`${msg.type === 'roll' ? 'font-bold text-lg' : ''}`}>{msg.text}</p>
+                <span className="text-xs opacity-70 block mt-1">{msg.timestamp ? new Date(msg.timestamp.seconds * 1000).toLocaleTimeString() : '...'}</span>
+              </div>
+            ))}
+          </div>
+
+          <form onSubmit={handleSendMessage} className="flex space-x-2 pt-3 border-t border-gray-700">
+            <input
+              type="text"
+              value={messageInput}
+              onChange={(e) => setMessageInput(e.target.value)}
+              placeholder="Mesajınızı buraya yazın..."
+              className="flex-grow p-3 bg-gray-700 border border-gray-600 rounded-xl text-white focus:ring-indigo-500"
+              required
+            />
+            <Button type="submit" color="blue">Gönder</Button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Character sheet view for the player in the game table
+const PlayerCharSheet = ({ char, onPdfDownload }) => {
+  const attributes = [
+    { key: 'str', label: 'STR' }, { key: 'dex', label: 'DEX' }, { key: 'con', label: 'CON' },
+    { key: 'int', label: 'INT' }, { key: 'wis', label: 'WIS' }, { key: 'cha', label: 'CHA' }
+  ];
+
+  return (
+    <div id="player-char-sheet" className="bg-white p-6 rounded-xl text-gray-800">
+      <div className="flex justify-between items-start mb-4">
+        <h2 className="text-2xl font-bold">{char.name || 'İsimsiz Karakter'}</h2>
+        <Button onClick={onPdfDownload} color="gray" className="py-1 px-3 text-sm">PDF İndir</Button>
+      </div>
+
+      <div className="text-gray-600 mb-4">
+        <p><strong>Irk:</strong> {char.race} | <strong>Sınıf:</strong> {char.class} ({char.level}. Seviye)</p>
+      </div>
+
+      <h3 className="text-lg font-semibold border-b pb-1 mb-3">Nitelikler</h3>
+      <div className="grid grid-cols-3 gap-4 mb-4">
+        {attributes.map(attr => (
+          <div key={attr.key} className="text-center bg-indigo-50 p-3 rounded-lg border">
+            <span className="text-sm font-medium text-indigo-700">{attr.label}</span>
+            <p className="text-xl font-extrabold text-gray-800">{char[attr.key]}</p>
+          </div>
+        ))}
+      </div>
+
+      <h3 className="text-lg font-semibold border-b pb-1 mb-2">Notlar</h3>
+      <p className="whitespace-pre-wrap text-sm p-3 bg-gray-50 border rounded-lg h-32 overflow-auto">{char.notes || 'Not yok.'}</p>
+    </div>
+  );
+};
+
+// DM Enhanced Character Editor Component
+const DMEnhancedCharEditor = ({ char, onSave, onCancel }) => {
+  const [editedChar, setEditedChar] = useState(char);
+  const charSheetRef = useRef(null);
+  
+  // Update local state when prop changes (DM selects a new character)
+  useEffect(() => {
+    setEditedChar(char);
+  }, [char]);
+
+  const handleChange = (e) => {
+    const { name, value, type } = e.target;
+    setEditedChar(prev => ({
+      ...prev,
+      [name]: type === 'number' ? parseInt(value) || 0 : value
+    }));
+  };
+
+  const handlePdfDownload = () => {
+    const content = charSheetRef.current;
+    if (!content) return;
+
+    const printWindow = window.open('', '', 'height=600,width=800');
+    printWindow.document.write('<html><head><title>DM Düzenleme Kağıdı</title>');
+    printWindow.document.write('<style>@page { size: A4; margin: 1cm; } body { font-family: sans-serif; padding: 20px; color: #333; } .sheet { border: 2px solid #1f2937; padding: 20px; border-radius: 8px; } .notes { white-space: pre-wrap; min-height: 100px; border: 1px solid #9ca3af; padding: 10px; border-radius: 4px; } .no-print { display: none; } </style>');
+    printWindow.document.write('</head><body>');
+    printWindow.document.write(content.outerHTML);
+    printWindow.document.write('</body></html>');
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  };
+
+  return (
+    <div ref={charSheetRef} className="bg-white p-6 rounded-xl shadow-lg border-t-4 border-red-500 text-gray-800">
+      <h3 className="text-2xl font-bold mb-4">DM: {editedChar.name} Karakterini Düzenle</h3>
+      <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); onSave(editedChar); }}>
+        
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <input type="text" name="name" value={editedChar.name} onChange={handleChange} placeholder="Karakter Adı" required className="p-3 border rounded-lg focus:ring-red-500" />
+          <input type="text" name="race" value={editedChar.race} onChange={handleChange} placeholder="Irk (Race)" className="p-3 border rounded-lg focus:ring-red-500" />
+          <input type="text" name="class" value={editedChar.class} onChange={handleChange} placeholder="Sınıf (Class)" className="p-3 border rounded-lg focus:ring-red-500" />
+        </div>
+        
+        <div className="grid grid-cols-2 md:grid-cols-7 gap-4 items-end">
+          <div className="col-span-1">
+            <label className="text-sm font-medium text-gray-600 block mb-1">Seviye</label>
+            <input type="number" name="level" value={editedChar.level} onChange={handleChange} min="1" max="20" className="p-3 border rounded-lg w-full focus:ring-red-500" />
+          </div>
+          {/* Attributes Inputs */}
+          {['str', 'dex', 'con', 'int', 'wis', 'cha'].map(attr => (
+            <div key={attr} className="col-span-1">
+              <label className="text-sm font-medium text-gray-600 block mb-1">{attr.toUpperCase()}</label>
+              <input type="number" name={attr} value={editedChar[attr]} onChange={handleChange} min="3" max="30" className="p-3 border rounded-lg w-full focus:ring-red-500" />
+            </div>
+          ))}
+        </div>
+        
+        <textarea name="notes" value={editedChar.notes} onChange={handleChange} placeholder="Önemli Notlar, Envanter, Büyüler..." rows="5" className="p-3 border rounded-lg w-full focus:ring-red-500"></textarea>
+        
+        <div className="flex space-x-4">
+          <Button type="submit" color="red" className="flex-grow">Değişiklikleri Kaydet</Button>
+          <Button type="button" onClick={onCancel} color="gray" className="flex-grow">İptal Et</Button>
+          <Button type="button" onClick={handlePdfDownload} color="gray" className="flex-grow">PDF İndir</Button>
+        </div>
+      </form>
+    </div>
+  );
+};
+
+
+// E. Create Game Logic (Handles creation and redirects to GameTable)
+const CreateGameLogic = ({ setCurrentView, setActiveTableId, userName, userId, db }) => {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const createGame = async () => {
+    setLoading(true);
+    setError('');
+    
+    // Auth objesinin varlığını kontrol et
+    if (!db) {
+        setError("Firebase bağlantısı yok. Lütfen yapılandırma anahtarlarını kontrol edin.");
+        setLoading(false);
+        return;
+    }
+
+    // Generate a simple 4-letter/digit code
+    const code = Math.random().toString(36).substring(2, 6).toUpperCase();
+    const tableDocPath = `artifacts/${appId}/public/data/tables/${code}`;
+
+    const newTable = {
+      code: code,
+      dmId: userId,
+      dmName: userName,
+      createdAt: serverTimestamp(),
+      players: [{ userId: userId, userName: userName, isDm: true, charId: null }]
+    };
+
+    try {
+      await setDoc(doc(db, tableDocPath), newTable);
+
+      // Create a starting chat message
+      await addDoc(collection(db, `${tableDocPath}/chat`), {
+        text: `${userName} (DM) masayı kurdu! Oyuncuların kodu girerek katılması bekleniyor.`,
+        senderName: 'Sistem',
+        senderId: 'system',
+        timestamp: serverTimestamp(),
+        type: 'system',
+      });
+
+      setActiveTableId(code);
+      setCurrentView('table');
+    } catch (e) {
+      console.error("Masa oluşturulurken hata:", e);
+      setError("Masa oluşturulurken bir hata oluştu. Lütfen tekrar deneyin. Firestore kurallarını kontrol edin.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    createGame(); // Automatically create the game when this view is loaded
+  }, []); // Run only once
+
+  if (loading) return (
+    <div className="flex justify-center items-center min-h-screen text-2xl text-indigo-700">
+      Masa oluşturuluyor...
+    </div>
+  );
+  if (error) return (
+    <div className="flex flex-col justify-center items-center min-h-screen p-4 text-red-500">
+      <p>Hata: {error}</p>
+      <Button onClick={() => setCurrentView('menu')} color="gray" className="mt-4">
+        Ana Menüye Dön
+      </Button>
+    </div>
+  );
+  return null; // Will transition to 'table' on success
+};
+
+// F. Join Game Logic (Handles joining and redirects to GameTable)
+const JoinGameLogic = ({ setCurrentView, joinCode, setActiveTableId, userName, userId, db, characters, setJoinCode }) => {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const joinGame = async () => {
+    if (!joinCode) {
+      setCurrentView('menu'); 
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    if (!db) {
+        setError("Firebase bağlantısı yok. Lütfen yapılandırma anahtarlarını kontrol edin.");
+        setLoading(false);
+        return;
+    }
+
+    const tableDocPath = `artifacts/${appId}/public/data/tables/${joinCode}`;
+
+    try {
+      const docSnap = await getDoc(doc(db, tableDocPath));
+      
+      if (!docSnap.exists()) {
+        setError(`Hata: ${joinCode} kodlu masa bulunamadı.`);
+      } else {
+        const tableData = docSnap.data();
+        let newPlayers = tableData.players;
+        let charSheetSelected = null;
+
+        // Check if user is already a player
+        const existingPlayer = newPlayers.find(p => p.userId === userId);
+
+        if (!existingPlayer) {
+          // New player joins
+          const defaultChar = characters.length > 0 ? characters[0].id : null;
+          
+          const newPlayer = { userId, userName, isDm: false, charId: defaultChar };
+          newPlayers = [...newPlayers, newPlayer];
+          charSheetSelected = defaultChar;
+
+          // Update table document
+          await updateDoc(doc(db, tableDocPath), { players: newPlayers });
+
+          // Send a system message to chat
+          const messageText = `${userName} masaya katıldı!`;
+          await addDoc(collection(db, `${tableDocPath}/chat`), {
+            text: messageText,
+            senderName: 'Sistem',
+            senderId: 'system',
+            timestamp: serverTimestamp(),
+            type: 'system',
+          });
+        }
+        
+        setActiveTableId(joinCode);
+        setCurrentView('table');
+      }
+    } catch (e) {
+      console.error("Masaya katılırken hata:", e);
+      setError("Masaya katılırken beklenmedik bir hata oluştu. Firestore kurallarını kontrol edin.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    joinGame();
+  }, [joinCode]);
+
+  if (loading) return (
+    <div className="flex justify-center items-center min-h-screen text-2xl text-indigo-700">
+      Masaya bağlanılıyor...
+    </div>
+  );
+  
+  if (error) return (
+    <div className="flex flex-col justify-center items-center min-h-screen p-4 bg-gray-100">
+      <p className="text-xl text-red-600 font-semibold mb-4">{error}</p>
+      <Button onClick={() => setCurrentView('menu')} color="gray" className="mt-4">
+        Ana Menüye Dön
+      </Button>
+    </div>
+  );
+
+  return null; // Will transition to 'table' on success
+};
+
+
+// -----------------------------------------------------------------------------
+// 4. Main App Component
+// -----------------------------------------------------------------------------
+
+const App = () => {
+  const { db, auth, userId, isAuthReady } = useFirebase();
+  const [currentView, setCurrentView] = useState('login'); // 'login', 'menu', 'create-char', 'create-game', 'join-game', 'table'
+  const [userName, setUserName] = useState('');
+  const [joinCode, setJoinCode] = useState('');
+  const [activeTableId, setActiveTableId] = useState('');
+  const [characters, setCharacters] = useState([]); // All characters owned by the user
+
+  // Character Fetcher (Runs for Menu, Creator, and Table views)
+  useEffect(() => {
+    if (!userId || !db || !isAuthReady) return;
+
+    const charCollectionPath = `artifacts/${appId}/users/${userId}/characters`;
+    const q = collection(db, charCollectionPath);
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const charList = snapshot.docs.map(doc => ({
+        id: doc.id,
+        userId: userId, // Add userId for easier reference in GameTable
+        ...doc.data()
+      }));
+      setCharacters(charList);
+    }, (error) => {
+      console.error("Karakterleri çekerken hata:", error);
+    });
+
+    return () => unsubscribe();
+  }, [userId, db, isAuthReady]);
+
+  // Handle View Rendering
+  const renderView = () => {
+    if (!isAuthReady) {
+      return (
+        <div className="flex justify-center items-center min-h-screen text-2xl text-gray-700 bg-gray-100">
+          Uygulama yükleniyor...
+        </div>
+      );
+    }
+    
+    if (!db || !auth) {
+        return (
+             <div className="flex justify-center items-center min-h-screen text-2xl text-red-700 bg-red-100 p-8">
+                <div className='p-6 bg-white rounded-xl shadow-lg'>
+                    <p className='font-bold mb-4'>HATA: Firebase Yapılandırması Eksik</p>
+                    <p className='text-base text-gray-700'>Lütfen <code>DnD_Lobby.jsx</code> dosyasının tepesindeki <code>EXTERNAL_FIREBASE_CONFIG</code> alanını kendi Firebase projenizin anahtarlarıyla güncelleyin.</p>
+                </div>
+            </div>
+        );
+    }
+
+
+    if (!userName) {
+      return <LoginScreen setUserName={setUserName} setCurrentView={setCurrentView} />;
+    }
+
+    // Check if the current user is the DM of the active table
+    const isDM = activeTableId && activeTableId === (auth.currentUser?.uid); // DM status is determined by table doc data, but we can check if the current user created it (by matching dmId to userId)
+
+    switch (currentView) {
+      case 'menu':
+        return <MainMenu setCurrentView={setCurrentView} setJoinCode={setJoinCode} userName={userName} />;
+      case 'create-char':
+        return <CharacterCreator setCurrentView={setCurrentView} userId={userId} db={db} />;
+      case 'create-game':
+        return <CreateGameLogic setCurrentView={setCurrentView} setActiveTableId={setActiveTableId} userName={userName} userId={userId} db={db} />;
+      case 'join-game':
+        return <JoinGameLogic setCurrentView={setCurrentView} joinCode={joinCode} setActiveTableId={setActiveTableId} userName={userName} userId={userId} db={db} characters={characters} setJoinCode={setJoinCode} />;
+      case 'table':
+        return <GameTable setCurrentView={setCurrentView} activeTableId={activeTableId} isDM={activeTableId === userId} userName={userName} userId={userId} db={db} characters={characters} setJoinCode={setJoinCode} />;
+      default:
+        return <MainMenu setCurrentView={setCurrentView} setJoinCode={setJoinCode} userName={userName} />;
+    }
+  };
+
+  return (
+    <div className="min-h-screen font-sans">
+      {renderView()}
+    </div>
+  );
+};
+
+export default App;
+
