@@ -31,9 +31,23 @@ if (Object.keys(firebaseConfig).length > 0) {
   auth = getAuth(firebaseApp);
 }
 
-const useFirebase = () => {
-  const [userId, setUserId] = useState(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
+const firebaseConfig = {
+
+  apiKey: "AIzaSyBkkTlRz9cHzRBTGRDztSJ-nKq_0reRbwk",
+
+  authDomain: "lorekeepersguild-47e2d.firebaseapp.com",
+
+  projectId: "lorekeepersguild-47e2d",
+
+  storageBucket: "lorekeepersguild-47e2d.firebasestorage.app",
+
+  messagingSenderId: "145071945264",
+
+  appId: "1:145071945264:web:aa0b00c2e1cc52dab45ff5",
+
+  measurementId: "G-KMF5MFBMEX"
+
+};
 
   useEffect(() => {
     if (!auth) return;
@@ -1081,3 +1095,4 @@ const App = () => {
 };
 
 export default App;
+
